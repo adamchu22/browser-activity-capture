@@ -91,6 +91,17 @@ class Bundle:
     def frame_files(self) -> set[str]:
         return {n for n in self.names if n.startswith("frames/") and n.endswith(".png")}
 
+    def disk_frames(self) -> list[dict]:
+        """Frames as [{t, file}] parsed from the DISK/zip filenames — the complete
+        list even when manifest.frames under-indexes (SYNTHESIS #3)."""
+        out = []
+        for n in self.frame_files():
+            stem = n[len("frames/"): -len(".png")]
+            if re.fullmatch(r"\d+", stem):
+                out.append({"t": int(stem), "file": n})
+        out.sort(key=lambda f: f["t"])
+        return out
+
 
 class Report:
     def __init__(self):
@@ -206,13 +217,19 @@ def check_frames(manifest_frames, referenced, b: Bundle, r: Report):
         r.ok(f"frames OK: {len(on_disk)} present, all references resolve")
 
 
-def check_coverage_gap(timeline, manifest, r: Report):
+def check_coverage_gap(timeline, manifest, b: Bundle, r: Report):
     """Catch the capture-on-navigation bug: a tab whose content-script capture
     (clicks/rrweb/frames) stopped while network kept recording. The bundle is
     still well-formed and usable — so this is a loud WARNING, not a hard failure —
     but it means part of the session was captured network-only. See
-    analyze/check_coverage.py."""
-    res = analyze_coverage(timeline, manifest.get("frames", []), manifest.get("duration_ms"))
+    analyze/check_coverage.py.
+
+    Frames come from DISK (b.disk_frames()), not manifest.frames — the manifest
+    can under-index (SYNTHESIS #3), which made the gap check look at an
+    incomplete frame list and miss real coverage gaps."""
+    disk_frames = b.disk_frames()
+    frames_for_check = disk_frames if disk_frames else manifest.get("frames", [])
+    res = analyze_coverage(timeline, frames_for_check, manifest.get("duration_ms"))
     for f in res["failures"]:
         r.warn(f"CAPTURE GAP — {f}")
     if res["failures"]:
@@ -313,7 +330,7 @@ def validate(path: Path) -> int:
     _, referenced = check_timeline(timeline, r)
     check_frames(manifest_frames, referenced, b, r)
     if isinstance(manifest, dict) and isinstance(timeline, list) and not r.errors:
-        check_coverage_gap(timeline, manifest, r)
+        check_coverage_gap(timeline, manifest, b, r)
     if b.has("network.har"):
         har = load_json(b, "network.har", r)
         log = har.get("log") if isinstance(har, dict) else None

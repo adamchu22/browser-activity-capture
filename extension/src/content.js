@@ -38,7 +38,8 @@
       "xox[baprs]-[A-Za-z0-9-]{10,}",
       "sk-ant-[A-Za-z0-9_-]{20,}",
       "sk-[A-Za-z0-9]{32,}",
-      "-----BEGIN(?:[A-Z ]+)?PRIVATE KEY-----",
+      "-----BEGIN(?:[A-Z ]+)?PRIVATE KEY-----[\\s\\S]*?-----END[A-Z ]*PRIVATE KEY-----",
+      "-----BEGIN(?:[A-Z ]+)?PRIVATE KEY-----[\\s\\S]*",
     ].join("|"),
     "gi"
   );

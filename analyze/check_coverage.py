@@ -18,13 +18,15 @@ Exit code 0 = PASS, 1 = coverage gap found. Stdlib only.
 """
 
 import json
+import re
 import sys
 import zipfile
 from pathlib import Path
 
 # Events produced by the content script (page side). If these stop but network
 # keeps going, the content script died.
-CONTENT_KINDS = {"click", "hover", "nav", "input", "key", "annotation:select", "annotation:draw"}
+CONTENT_KINDS = {"click", "hover", "nav", "input", "key", "annotation:select", "annotation:draw",
+                 "scroll", "focus"}
 NETWORK_KIND = "network"
 
 # A tab needs at least this many content events to count as "was being captured"
@@ -34,6 +36,10 @@ MIN_CONTENT_EVENTS = 3
 DEFAULT_GAP_MS = 45_000
 # Frames should now be on a ~3s timer; warn if any gap is much larger.
 DEFAULT_FRAME_GAP_MS = 60_000
+
+# Frame filenames are the ms offset, zero-padded (frames/000123.png).
+_FRAME_STEM_RE = re.compile(r"^(\d+)$")
+_ZIP_FRAME_RE = re.compile(r"^frames/(\d+)\.png$")
 
 
 def _fmt(ms):
@@ -122,19 +128,35 @@ def _parse(raw):
 
 
 def _load(bundle):
-    """Load timeline + frames-from-manifest from a bundle dir or zip. Tolerates a
+    """Load timeline + frames from a bundle dir or zip. Tolerates a
     malformed/missing file: the loaders fall back to safe shapes so the CLI can't
-    crash on an untrusted bundle."""
+    crash on an untrusted bundle. FRAMES come from DISK when a frames/ dir or
+    zip entries exist — the manifest can under-index them (SYNTHESIS #3) — with
+    the manifest list only as a fallback for a stripped bundle."""
     p = Path(bundle)
     timeline = manifest = None
+    disk_frames = []
     if p.is_dir():
         timeline = _parse((p / "timeline.json").read_bytes()) if (p / "timeline.json").exists() else None
         manifest = _parse((p / "manifest.json").read_bytes()) if (p / "manifest.json").exists() else None
+        fdir = p / "frames"
+        if fdir.is_dir():
+            disk_frames = [
+                {"t": int(m.group(1)), "file": f"frames/{q.name}"}
+                for q in sorted(fdir.iterdir())
+                if q.suffix.lower() == ".png" and (m := _FRAME_STEM_RE.match(q.stem))
+            ]
     elif zipfile.is_zipfile(p):
         with zipfile.ZipFile(p) as z:
             names = set(z.namelist())
             timeline = _parse(z.read("timeline.json")) if "timeline.json" in names else None
             manifest = _parse(z.read("manifest.json")) if "manifest.json" in names else None
+            disk_frames = []
+            for name in sorted(names):
+                m = _ZIP_FRAME_RE.match(name)
+                if m:
+                    disk_frames.append({"t": int(m.group(1)), "file": name})
+            disk_frames.sort(key=lambda f: f["t"])
     else:
         sys.exit(f"not a bundle dir or zip: {bundle}")
     if not isinstance(timeline, list):
@@ -142,7 +164,8 @@ def _load(bundle):
     if not isinstance(manifest, dict):
         manifest = {}
     frames = manifest.get("frames")
-    return timeline, (frames if isinstance(frames, list) else []), manifest.get("duration_ms")
+    frames = frames if isinstance(frames, list) else []
+    return timeline, (disk_frames if disk_frames else frames), manifest.get("duration_ms")
 
 
 def main(argv):

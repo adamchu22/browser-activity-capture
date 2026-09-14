@@ -90,8 +90,14 @@ const now = () => recordingElapsed(Date.now(), state);
 // exported zip (errors.json) instead of being trapped in a console we can't see —
 // the offscreen doc and content script both report here.
 function logError(where, info = {}) {
-  const message = info.message || String(info.error || info) || "unknown error";
-  state.errors.push({ t: state.t0 ? now() : 0, where, message, stack: info.stack || null });
+  // Error messages/stacks are machine-generated and can embed captured values —
+  // a URL with ?token=…, a header dump, a secret-valued input in a DOM selector.
+  // errors.json is part of the exported bundle, so scrub every string through
+  // the canonical token/secret scrubbers BEFORE persisting (SYNTHESIS #11).
+  const clean = (s) => (typeof s === "string" ? scrubTokens(redactUrl(s)) : s);
+  const message = clean(info.message || String(info.error || info) || "unknown error");
+  const stack = clean(info.stack || null);
+  state.errors.push({ t: state.t0 ? now() : 0, where, message, stack });
   console.warn(`[capture-error] ${where}: ${message}`);
   persistSession();
 }
@@ -1285,6 +1291,14 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
       _t: now(),
       startedDateTime: new Date().toISOString(),
       _start: timestamp,
+      // CDP timestamps are WALL clock, but the bundle's one clock (recordingElapsed
+      // in clock.js) EXCLUDES paused time. Computing entry.time later as
+      // (responseTs - _start) counted paused wall-time as request latency — a
+      // request spanning a pause reported minutes of "latency" that the video-
+      // aligned clock disagrees with (SYNTHESIS bug #2). Freeze the one-clock
+      // reading at request start here, and measure duration on the SAME clock at
+      // responseReceived/loadingFinished, so pause time never inflates entry.time.
+      _t0Clock: now(),
       request: {
         method: request.method,
         url: reqUrl,
@@ -1313,7 +1327,10 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
       headers: redactHeaders(toHeaderArray(r.headers)),
       content: { mimeType: r.mimeType },
     };
-    entry.time = Math.round((params.timestamp - entry._start) * 1000);
+    // One-clock duration: never (wallTs - _start), which counts paused time
+    // (the CDP clock and the recording clock diverge by pausedAccum). Using the
+    // frozen _t0Clock reading keeps entry.time consistent with the video clock.
+    entry.time = Math.max(0, Math.round(now() - (entry._t0Clock ?? entry._t ?? 0)));
     // Only same-site JSON responses get their body fetched on loadingFinished — the
     // app's own API data model, not third-party/HTML/binary. (`_`-prefixed → stripped.)
     entry._wantBody = entry._sameSite && isJsonMime(r.mimeType);
@@ -1368,13 +1385,16 @@ function toHeaderArray(headers = {}) {
 
 // Token-scrub a serialized rrweb node (DOM snapshot or mutation). Stringify →
 // scrubTokens → parse catches a JWT/bearer anywhere in the tree (img src, href,
-// inline text), where a per-field rule wouldn't reach. Falls back to the raw node
-// only if (de)serialization fails — which it shouldn't for rrweb's plain JSON.
+// inline text), where a per-field rule wouldn't reach. If (de)serialization
+// fails, the node is DROPPED — never returned raw: the pre-v2 fallback could
+// persist an unredacted node (with an embedded secret) into events.jsonl, which
+// is the exact leak this chokepoint exists to prevent. One lost node of DOM
+// diff is a recoverable rendering gap; a leaked token is not.
 function scrubNode(node) {
   try {
     return JSON.parse(scrubTokens(JSON.stringify(node)));
   } catch {
-    return node;
+    return { rrweb: "‹node dropped: scrub failed›" };
   }
 }
 

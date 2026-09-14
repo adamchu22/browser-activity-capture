@@ -48,7 +48,7 @@ export function streamFiles(timeline, rrweb, frames, har, t0Wall) {
     comment: `t0_wall=${t0Wall}. Auth headers and cookies redacted before write.`,
     // HAR permits custom underscore fields. Keep the recording clock and source
     // tab: wall-clock subtraction cannot reconstruct pauses.
-    entries: (har || []).map(({ seq, _start, _sameSite, _wantBody, requestId, ...e }) => e),
+    entries: (har || []).map(({ seq, _start, _sameSite, _wantBody, _t0Clock, requestId, ...e }) => e),
   };
   const files = [
     { name: "timeline.json", data: JSON.stringify(tl, null, 2) },

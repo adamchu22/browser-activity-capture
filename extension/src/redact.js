@@ -52,7 +52,8 @@ const TOKEN_VALUE_RE = new RegExp(
     "xox[baprs]-[A-Za-z0-9-]{10,}",                                    // Slack token
     "sk-ant-[A-Za-z0-9_-]{20,}",                                       // Anthropic API key
     "sk-[A-Za-z0-9]{32,}",                                             // OpenAI API key
-    "-----BEGIN(?:[A-Z ]+)?PRIVATE KEY-----",                          // PEM private key block
+    "-----BEGIN(?:[A-Z ]+)?PRIVATE KEY-----[\\s\\S]*?-----END[A-Z ]*PRIVATE KEY-----", // full PEM block incl. key material
+    "-----BEGIN(?:[A-Z ]+)?PRIVATE KEY-----[\\s\\S]*",                                  // unterminated PEM — redact to end
   ].join("|"),
   "gi"
 );

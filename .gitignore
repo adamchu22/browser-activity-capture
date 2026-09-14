@@ -1,13 +1,12 @@
-.DS_Store
-__pycache__/
-*.pyc
-.playwright-mcp/
 
 # Local capture recordings — large test artifacts, not source.
-outputs/
-
 # Local transcription venv (faster-whisper/mlx-audio) — recreate with uv, see analyze/README.
-.venv/
-
 # Per-user auto-pack config (watch dirs + packs dir) — written by setup, machine-specific.
+*.pyc
+.DS_Store
+.hermes/
+.playwright-mcp/
+.venv/
+__pycache__/
 analyze/autopack.config.json
+outputs/
